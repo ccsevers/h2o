@@ -7,6 +7,7 @@ import java.text.DecimalFormat;
 import java.util.Arrays;
 
 import jsr166y.RecursiveAction;
+import jsr166y.CountedCompleter;
 import water.*;
 import water.util.Utils;
 import Jama.CholeskyDecomposition;
@@ -21,11 +22,12 @@ public final class Gram extends Iced {
   final int _diagN;
   final int _denseN;
   final int _fullN;
+  final int BLK;
 //  double[] _xy;
 //  double _yy;
 //  long _nobs;
 
-  public Gram() {_diagN = _denseN = _fullN = 0; _hasIntercept = false;}
+  public Gram() {_diagN = _denseN = _fullN = 0; _hasIntercept = false; BLK=10;}
 
   public Gram(int N, int diag, int dense, int sparse, boolean hasIntercept) {
     _hasIntercept = hasIntercept;
@@ -33,6 +35,18 @@ public final class Gram extends Iced {
     _xx = new double[_fullN - diag][];
     _diag = MemoryManager.malloc8d(_diagN = diag);
     _denseN = dense;
+    BLK = 10;
+    for( int i = 0; i < (_fullN - _diagN); ++i )
+      _xx[i] = MemoryManager.malloc8d(diag + i + 1);
+  }
+
+  public Gram(int N, int diag, int dense, int sparse, int blk, boolean hasIntercept) {
+    _hasIntercept = hasIntercept;
+    _fullN = N + (_hasIntercept?1:0);
+    _xx = new double[_fullN - diag][];
+    _diag = MemoryManager.malloc8d(_diagN = diag);
+    _denseN = dense;
+    BLK = blk;
     for( int i = 0; i < (_fullN - _diagN); ++i )
       _xx[i] = MemoryManager.malloc8d(diag + i + 1);
   }
@@ -44,6 +58,59 @@ public final class Gram extends Iced {
       _xx[i][_xx[i].length - 1] += d;
   }
 
+  private class StripTask extends CountedCompleter {
+    final double[][] _xx;
+    final int _i0, _i1, _j0, _j1;
+    public StripTask(StripTask cc, double xx[][], int ifr, int ito, int jfr, int jto) {
+      super(cc);
+      _xx = xx;
+      _i0 = ifr; _i1 = ito; _j0 = jfr; _j1 = jto;
+    }
+    @Override public void compute() {
+      final int sparseN = _diag.length;
+      if ((_i1 - _i0)*(_j1 - _j0) > 2000) {
+        int mid = (_i0 + _i1)>>>1;
+        setPendingCount(1);
+        new StripTask(this, _xx, mid, _i1, _j0, _j1).fork();
+        new StripTask(this, _xx, _i0, mid, _j0, _j1).compute();
+      } else {
+        for (int j = _j0; j < _j1; j++) {
+          int k = j - sparseN;
+          for (int i = _i0; i < _i1; i++)
+            for (int s = _j0; k < j; s++) _xx[i][j] -= _xx[k][s]*_xx[i][s];
+        }
+      }      
+    }    
+  }
+
+  private class TriangleTask extends CountedCompleter {
+    final double[][] _xx;
+    final int _s0,_s1;          // the column range of the strip whose outer product is to be subtracted from the triangle.
+    final int _j0,_j1;          // the column range in the lower right triangle covered by this task
+    public TriangleTask(TriangleTask cc, double[][] xx, int s0, int s1, int j0, int j1) {
+      super(cc);
+      _xx = xx; _s0 = s0; _s1 = s1; _j0 = j0; _j1 = j1;
+    }
+    @Override public void compute() {
+      final int sparseN = _diag.length;
+      if ((_j1 - _j0)*(_fullN<<2 - _j0 - _j1)>>>2 > 2000) {
+        int mid = (_j0 + _j1) >>>1;
+        setPendingCount(1);
+        new TriangleTask(this,_xx,_s0,_s1,mid,_j1).fork();
+        new TriangleTask(this,_xx,_s0,_s1,_j0,mid).compute();
+      } else {
+        for (int j = _j0; j < _j1; j++) {
+          int k = j-sparseN;
+          for (int i = k; i < _denseN; i++)
+            for (int s = _s0; s < _s1; s++) _xx[i][j] -= _xx[k][s]*_xx[i][s];
+        }
+      }
+    }
+  }
+
+  public Cholesky cholesky(Cholesky chol) {
+    return cholesky(chol,1);
+  }
   /**
    * Compute the cholesky decomposition.
    *
@@ -62,7 +129,7 @@ public final class Gram extends Iced {
    * @param chol
    * @return
    */
-  public Cholesky cholesky(Cholesky chol) {
+  public Cholesky cholesky(Cholesky chol, int parallelize) {
     if( chol == null ) {
       double[][] xx = _xx.clone();
       for( int i = 0; i < xx.length; ++i )
@@ -72,6 +139,7 @@ public final class Gram extends Iced {
     final Cholesky fchol = chol;
     final int sparseN = _diag.length;
     final int denseN = _fullN - sparseN;
+    boolean spd=true;
     // compute the cholesky of the diagonal and diagonal*dense parts
     if( _diag != null ) for( int i = 0; i < sparseN; ++i ) {
       double d = 1.0 / (chol._diag[i] = Math.sqrt(_diag[i]));
@@ -94,6 +162,36 @@ public final class Gram extends Iced {
       }.fork());
     }
     fs.blockForPending();
+        
+    // factorize the dense*sparse region.    
+    if (parallelize==1) {
+      final double xx[][] = fchol._xx;
+      for (int i=0, j=sparseN; j < sparseN+denseN; i+=BLK,j+=BLK) {
+        // update the upper left triangle.
+        int tiR = Math.min(i+BLK, denseN);
+        int tjR = Math.min(j+BLK, sparseN+denseN);
+        for (int tk=i,tj=j; tj < tjR; tj++,tk++) {
+          assert xx[tk][tj] > 0;
+          xx[tk][tj] = Math.sqrt(xx[tk][tj]);
+          double d=1.0/xx[tk][tj];
+          // update column of tj
+          for (int ti = tk; ti < tiR; ti++)
+            xx[ti][tj] *= d;
+          // subtract outerproduct of column tj from its right part
+          for (int ui = tk + 1; ui < tiR; ui++)
+            for (int uj = tk + 1; uj < ui; uj++)
+              xx[ui][uj+sparseN] -= xx[ui][tj]*xx[uj][tj];
+        }
+        if (tiR == denseN) break;
+        // update the lower left strip
+        new StripTask(null,xx,i,denseN,j,j+BLK).invoke();
+        // update the lower right triangle
+        new TriangleTask(null,xx,j,j+BLK,j+BLK,_fullN).invoke();
+      }
+      fchol.setSPD(true);
+      return fchol;
+    } 
+
     // compute the cholesky of dense*dense-outer_product(diagonal*dense)
     // TODO we still use Jama, which requires (among other things) copy and expansion of the matrix. Do it here without copy and faster.
     double[][] arr = new double[denseN][];
