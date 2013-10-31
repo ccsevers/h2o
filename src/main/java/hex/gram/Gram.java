@@ -5,10 +5,11 @@ import hex.FrameTask;
 
 import java.text.DecimalFormat;
 import java.util.Arrays;
-
 import jsr166y.RecursiveAction;
 import jsr166y.CountedCompleter;
 import water.*;
+
+import water.util.Log;
 import water.util.Utils;
 import Jama.CholeskyDecomposition;
 import Jama.Matrix;
@@ -170,6 +171,7 @@ public final class Gram extends Iced {
         // update the upper left triangle.
         int tiR = Math.min(i+BLK, denseN);
         int tjR = Math.min(j+BLK, sparseN+denseN);
+        Log.err("CHOL UPDATES UPPER LEFT TRIANGLE J[" + j + ":" + tjR + "]");
         for (int tk=i,tj=j; tj < tjR; tj++,tk++) {
           assert xx[tk][tj] > 0;
           xx[tk][tj] = Math.sqrt(xx[tk][tj]);
@@ -184,8 +186,10 @@ public final class Gram extends Iced {
         }
         if (tiR == denseN) break;
         // update the lower left strip
+        Log.err("CHOL UPDATES LOWER LEFT STRIP J[" + j + ":" + (j+BLK) + "]");
         new StripTask(null,xx,i,denseN,j,j+BLK).invoke();
         // update the lower right triangle
+        Log.err("CHOL UPDATES LOWER RIGHT TRIANGLE J[" + (j+BLK) + ":" + _fullN + "]");
         new TriangleTask(null,xx,j,j+BLK,j+BLK,_fullN).invoke();
       }
       fchol.setSPD(true);
