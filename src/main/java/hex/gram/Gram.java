@@ -78,8 +78,30 @@ public final class Gram extends Iced {
         for (int j = _j0; j < _j1; j++) {
           int k = j - sparseN;
           for (int i = _i0; i < _i1; i++)
-            for (int s = _j0; k < j; s++) _xx[i][j] -= _xx[k][s]*_xx[i][s];
+            for (int s = _j0; s < j; s++) _xx[i][j] -= _xx[k][s]*_xx[i][s];
         }
+      }      
+    }    
+  }
+
+  static private class StripTask2 extends CountedCompleter {
+    final double[][] _xx;
+    final int _i0, _i1, _j0, _j1;
+    public StripTask2(StripTask2 cc, double xx[][], int ifr, int ito, int jfr, int jto) {
+      super(cc);
+      _xx = xx;
+      _i0 = ifr; _i1 = ito; _j0 = jfr; _j1 = jto;
+    }
+    @Override public void compute() {
+      if ((_i1 - _i0)*(_j1 - _j0) > 2000) {
+        int mid = (_i0 + _i1)>>>1;
+        setPendingCount(1);
+        new StripTask2(this, _xx, mid, _i1, _j0, _j1).fork();
+        new StripTask2(this, _xx, _i0, mid, _j0, _j1).compute();
+      } else {
+        for (int j = _j0; j < _j1; j++)
+          for (int i = _i0; i < _i1; i++)
+            for (int s = _j0; s < j; s++) _xx[i][j] -= _xx[j][s]*_xx[i][s];
       }      
     }    
   }
@@ -107,6 +129,65 @@ public final class Gram extends Iced {
         }
       }
     }
+  }
+
+  static private class TriangleTask2 extends CountedCompleter {
+    final double[][] _xx;
+    final int _s0,_s1;          // the column range of the strip whose outer product is to be subtracted from the triangle.
+    final int _j0,_j1;          // the column range in the lower right triangle covered by this task
+    public TriangleTask2(TriangleTask2 cc, double[][] xx, int s0, int s1, int j0, int j1) {
+      super(cc);
+      _xx = xx; _s0 = s0; _s1 = s1; _j0 = j0; _j1 = j1;
+    }
+    @Override public void compute() {
+      int N = _xx.length;
+      if ((_j1 - _j0)*(N<<2 - _j0 - _j1)>>>2 > 2000) {
+        int mid = (_j0 + _j1) >>>1;
+        setPendingCount(1);
+        new TriangleTask2(this,_xx,_s0,_s1,mid,_j1).fork();
+        new TriangleTask2(this,_xx,_s0,_s1,_j0,mid).compute();
+      } else {
+        for (int j = _j0; j < _j1; j++) {
+          for (int i = j; i < N; i++)
+            for (int s = _s0; s < _s1; s++) _xx[i][j] -= _xx[j][s]*_xx[i][s];
+        }
+      }
+    }
+  }
+
+  static public class InPlaceCholesky {
+    final double _xx[][];             // Lower triagle of the symmetric matrix. 
+    public InPlaceCholesky(double xx[][], int par, int BLK) { 
+      _xx = xx; 
+      final int N = xx.length;
+      if (par == 1) {
+        for (int j=0; j < N; j+=BLK) {
+          // update the upper left triangle.
+          int tjR = Math.min(j+BLK, N);
+          Log.err("CHOL UPDATES UPPER LEFT TRIANGLE J[" + j + ":" + tjR + "]");
+          for (int tj=j; tj < tjR; tj++) {
+            assert xx[tj][tj] > 0;
+            xx[tj][tj] = Math.sqrt(xx[tj][tj]);
+            double d=1.0/xx[tj][tj];
+            // update column of tj
+            for (int ti = tj; tj < tjR; ti++)
+              xx[ti][tj] *= d;
+          // subtract outerproduct of column tj from its right part
+            for (int ui = tj + 1; ui < tjR; ui++)
+              for (int uj = tj + 1; uj < ui; uj++)
+                xx[ui][uj] -= xx[ui][tj]*xx[uj][tj];
+          }
+          if (tjR == N) break;
+          // update the lower left strip
+          Log.err("CHOL UPDATES LOWER LEFT STRIP J[" + j + ":" + (j+BLK) + "]");
+          new StripTask2(null,xx,j+BLK,N,j,j+BLK).invoke();
+          // update the lower right triangle
+          Log.err("CHOL UPDATES LOWER RIGHT TRIANGLE J[" + (j+BLK) + ":" + N + "]");
+          new TriangleTask2(null,xx,j,j+BLK,j+BLK,N).invoke();
+        }
+      }
+    }
+    public double[][] getL() { return _xx; }
   }
 
   public Cholesky cholesky(Cholesky chol) {
