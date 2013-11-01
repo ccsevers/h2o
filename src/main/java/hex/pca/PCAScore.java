@@ -48,6 +48,9 @@ public class PCAScore extends FrameJob {
     for(int i = 0; i < num_pc; i++) names[i] = "PC" + i;
     Frame f = new Frame(names, outputVecs);
     DKV.put(destination_key, f);
+
+    // PCAScoreTask2 tsk = new PCAScoreTask2(this, nfeat, num_pc, model.eigVec, temp).doIt(fr);
+    // DKV.put(destination_key, tsk._outputFrame);
   }
 
   @Override protected void init() {
@@ -102,7 +105,16 @@ public class PCAScore extends FrameJob {
     }
 
     @Override protected void processRow(double[] nums, int ncats, int[] cats, NewChunk[] outputs) {
+      for(int c = 0; c < _ncomp; c++) {
+        double x = 0;
+        for(int d = 0; d < cats.length; d++)
+          x += _eigvec[cats[d]][c];
 
+        int k = _catOffsets[_cats];
+        for(int d = 0; d < nums.length; d++)
+          x += nums[d]*_eigvec[k++][c];
+        outputs[c].set0(0, x);
+      }
     }
   }
 
