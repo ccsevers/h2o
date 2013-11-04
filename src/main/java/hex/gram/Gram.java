@@ -21,13 +21,13 @@ public final class Gram extends Iced {
   final int _diagN;
   final int _denseN;
   final int _fullN;
-  final int BLK;
+  final int STEP;
   final static int MIN_TSKSZ=5000;
 //  double[] _xy;
 //  double _yy;
 //  long _nobs;
 
-  public Gram() {_diagN = _denseN = _fullN = 0; _hasIntercept = false; BLK=10;}
+  public Gram() {_diagN = _denseN = _fullN = 0; _hasIntercept = false; STEP=10;}
 
   public Gram(int N, int diag, int dense, int sparse, boolean hasIntercept) {
     _hasIntercept = hasIntercept;
@@ -35,7 +35,7 @@ public final class Gram extends Iced {
     _xx = new double[_fullN - diag][];
     _diag = MemoryManager.malloc8d(_diagN = diag);
     _denseN = dense;
-    BLK = 10;
+    STEP = 10;
     for( int i = 0; i < (_fullN - _diagN); ++i )
       _xx[i] = MemoryManager.malloc8d(diag + i + 1);
   }
@@ -46,7 +46,7 @@ public final class Gram extends Iced {
     _xx = new double[_fullN - diag][];
     _diag = MemoryManager.malloc8d(_diagN = diag);
     _denseN = dense;
-    BLK = blk;
+    STEP = blk;
     for( int i = 0; i < (_fullN - _diagN); ++i )
       _xx[i] = MemoryManager.malloc8d(diag + i + 1);
   }
@@ -166,15 +166,15 @@ public final class Gram extends Iced {
   static public class InPlaceCholesky {
     final double _xx[][];             // Lower triagle of the symmetric matrix. 
     private boolean _isSPD;
-    public InPlaceCholesky(double xx[][], int par, int BLK) { 
+    public InPlaceCholesky(double xx[][], int par, int STEP) { 
       _xx = xx; 
       _isSPD = true;
       final int N = xx.length;
       if (par == 1) {
 //         Log.err("STARTING INPLACE CHOLESKY -- ");
-        for (int j=0; j < N; j+=BLK) {
+        for (int j=0; j < N; j+=STEP) {
           // update the upper left triangle.
-          int tjR = Math.min(j+BLK, N);
+          int tjR = Math.min(j+STEP, N);
 //           Log.err("CHOL UPDATES UPPER LEFT TRIANGLE J[" + j + ":" + tjR + "]");
           for (int tj=j; tj < tjR; tj++) {
             if (xx[tj][tj] <= 0) { xx[tj][tj] = 0.0; _isSPD = false; }
@@ -190,10 +190,10 @@ public final class Gram extends Iced {
           }
           if (tjR == N) break;
           // update the lower left strip
-//           Log.err("CHOL TO UPDATE LOWER LEFT STRIP J[" + j + ":" + (j+BLK) + "]");
-          new StripTask2(null,xx,j+BLK,N,j,j+BLK).invoke();
+//           Log.err("CHOL TO UPDATE LOWER LEFT STRIP J[" + j + ":" + (j+STEP) + "]");
+          new StripTask2(null,xx,j+STEP,N,j,j+STEP).invoke();
           // update the lower right triangle
-          new TriangleTask2(null,xx,j,j+BLK,j+BLK,N).invoke();
+          new TriangleTask2(null,xx,j,j+STEP,j+STEP,N).invoke();
         }
       }
     }
@@ -259,10 +259,10 @@ public final class Gram extends Iced {
     // factorize the dense*sparse region.    
     if (parallelize==1) {
       final double xx[][] = fchol._xx;
-      for (int i=0, j=sparseN; j < sparseN+denseN; i+=BLK,j+=BLK) {
+      for (int i=0, j=sparseN; j < sparseN+denseN; i+=STEP,j+=STEP) {
         // update the upper left triangle.
-        int tiR = Math.min(i+BLK, denseN);
-        int tjR = Math.min(j+BLK, sparseN+denseN);
+        int tiR = Math.min(i+STEP, denseN);
+        int tjR = Math.min(j+STEP, sparseN+denseN);
         Log.err("CHOL UPDATES UPPER LEFT TRIANGLE J[" + j + ":" + tjR + "]");
         for (int tk=i,tj=j; tj < tjR; tj++,tk++) {
           assert xx[tk][tj] > 0;
@@ -278,9 +278,9 @@ public final class Gram extends Iced {
         }
         if (tiR == denseN) break;
         // update the lower left strip
-        new StripTask(null,xx,i,denseN,j,j+BLK).invoke();
+        new StripTask(null,xx,i,denseN,j,j+STEP).invoke();
         // update the lower right triangle
-        new TriangleTask(null,xx,j,j+BLK,j+BLK,_fullN).invoke();
+        new TriangleTask(null,xx,j,j+STEP,j+STEP,_fullN).invoke();
       }
       fchol.setSPD(true);
       return fchol;
