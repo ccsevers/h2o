@@ -15,8 +15,6 @@ import Jama.CholeskyDecomposition;
 import Jama.Matrix;
 
 public final class Gram extends Iced {
-
-
   final boolean _hasIntercept;
   double[][] _xx;
   double[] _diag;
@@ -24,6 +22,7 @@ public final class Gram extends Iced {
   final int _denseN;
   final int _fullN;
   final int BLK;
+  final static int MIN_TSKSZ=5000;
 //  double[] _xy;
 //  double _yy;
 //  long _nobs;
@@ -69,7 +68,7 @@ public final class Gram extends Iced {
     }
     @Override public void compute() {
       final int sparseN = _diag.length;
-      if ((_i1 - _i0)*(_j1 - _j0) > 2000) {
+      if ((_i1 - _i0)*(_j1 - _j0) > Gram.MIN_TSKSZ) {
         int mid = (_i0 + _i1)>>>1;
         setPendingCount(1);
         new StripTask(this, _xx, mid, _i1, _j0, _j1).fork();
@@ -94,10 +93,10 @@ public final class Gram extends Iced {
       _i0 = ifr; _i1 = ito; _j0 = jfr; _j1 = jto;
     }
     @Override public void compute() {
-      if ((_i1 - _i0)*(_j1 - _j0) > 2000) {
+      if ((_i1 - _i0)*(_j1 - _j0) > Gram.MIN_TSKSZ) {
         int mid = (_i0 + _i1)>>>1;
-        setPendingCount(1);
-        new StripTask2(this, _xx, mid, _i1, _j0, _j1).fork();
+        setPendingCount(0);
+        new StripTask2(this, _xx, mid, _i1, _j0, _j1).compute();
         new StripTask2(this, _xx, _i0, mid, _j0, _j1).compute();
       } else {
         for (int j = _j0; j < _j1; j++) {
@@ -107,8 +106,8 @@ public final class Gram extends Iced {
             _xx[i][j] *= d;
           }
         }
+        tryComplete();
       }      
-      tryComplete();
     }    
   }
 
@@ -122,7 +121,7 @@ public final class Gram extends Iced {
     }
     @Override public void compute() {
       final int sparseN = _diag.length;
-      if ((_j1 - _j0)*(_fullN<<2 - _j0 - _j1)>>>2 > 2000) {
+      if ((_j1 - _j0)*(_fullN<<2 - _j0 - _j1)>>>2 > Gram.MIN_TSKSZ) {
         int mid = (_j0 + _j1) >>>1;
         setPendingCount(1);
         new TriangleTask(this,_xx,_s0,_s1,mid,_j1).fork();
@@ -149,10 +148,10 @@ public final class Gram extends Iced {
     @Override public void compute() {
 //       Log.err("CHOL TO UPDATE LOWER RIGHT TRIANGLE J[" + _j0 + ":" + _j1 + "]");
       int N = _xx.length;
-      if (_j1 > (_j0 + 1) && ((_j1 - _j0)*(N - (_j0 + _j1)>>>1) > 2000)) {
+      if (_j1 > (_j0 + 1) && ((_j1 - _j0)*(N - (_j0 + _j1)>>>1) > Gram.MIN_TSKSZ)) {
         int mid = (_j0 + _j1) >>>1;
-        setPendingCount(1);
-        new TriangleTask2(this,_xx,_s0,_s1,mid,_j1).fork();
+        setPendingCount(0);
+        new TriangleTask2(this,_xx,_s0,_s1,mid,_j1).compute();
         new TriangleTask2(this,_xx,_s0,_s1,_j0,mid).compute();
       } else {
         for (int j = _j0; j < _j1; j++) {

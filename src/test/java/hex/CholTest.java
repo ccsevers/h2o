@@ -23,9 +23,9 @@ public class CholTest extends TestUtil{
 
   @Test public void testPar1Blk10 () {
     System.out.println("Running testPar1Blk10");
-    for (int sz = 100; sz < 1000; sz+=100) {
+    for (int sz = 2000; sz < 4000; sz+=1000) {
       DataSetup data = new DataSetup(sz, 12345);
-      new ForkJoinPool(4).invoke(new TestSetup(data,1,10));
+      new ForkJoinPool(2).invoke(new TestSetup(data,1,100));
     }
   } 
   
@@ -41,15 +41,24 @@ public class CholTest extends TestUtil{
           x[i][j] = r.nextGaussian();
       }
       for (int i = 0; i < N; i++) {
-        xx[i] = new double[i+1];
-        for (int j = 0; j <= i; j++)
+        xx[i] = new double[N];
+        for (int j = 0; j < N; j++)
           xx[i][j] = 0;
       }
       for (int k = 0; k < N; k++)
         for (int i = 0; i < N; i++)
-          for (int j = 0; j <= i; j++)
+          for (int j = 0; j <= i; j++) {
             xx[i][j] += x[k][i]*x[k][j];
-        
+            xx[j][i] = xx[i][j];
+          }
+    }
+  }
+
+  private static  void print_matrix(double matrix[][]) {
+    for (int i = 0; i < matrix.length; i++) {
+      for (int j = 0; j <= i; j++)
+        System.out.print(String.format("%.2f ",matrix[i][j]));
+      System.out.println();
     }
   }
 
@@ -66,15 +75,19 @@ public class CholTest extends TestUtil{
       for (int i = 0; i < jamaxx.length; i++) 
         jamaxx[i] = Arrays.copyOfRange(data.xx[i], 0, jamaxx.length);
       long start = System.currentTimeMillis();
-      double[][] jamaChol = new Matrix(jamaxx).chol().getL().getArray();
-      Log.err("JAMA CHOLESKY TAKES " + (System.currentTimeMillis() - start) + "MILLISECONDS.");
+      CholeskyDecomposition jamaChol = new Matrix(jamaxx).chol();
+      Log.err("JAMA CHOLESKY TAKES " + (System.currentTimeMillis() - start) + " MILLISECONDS.");
+      if (!jamaChol.isSPD())  return;
+      double[][] jama = jamaChol.getL().getArray();
+      System.out.println("JAMA CHOLESKY -- "); // print_matrix(jama);
       start = System.currentTimeMillis();
       double[][] chol = new InPlaceCholesky(data.xx, par, blk).getL();
-      Log.err("H2O CHOLESKY TAKES " + (System.currentTimeMillis() - start) + "MILLISECONDS.");
-      assertEquals(jamaChol.length, chol.length);
+      Log.err("H2O CHOLESKY TAKES " + (System.currentTimeMillis() - start) + " MILLISECONDS.");
+      System.out.println("H2O CHOLESKY -- "); // print_matrix(chol);
+      assertEquals(jama.length, chol.length);
       for (int i = 0; i < chol.length; i++)
-        for( int j = 0; j < chol[i].length; j++)
-          assertEquals(jamaChol[i][j], chol[i][j], 0.0001);
+        for( int j = 0; j <= i; j++)
+          assertEquals(jama[i][j], chol[i][j], 0.0001);
     }
   }
 }
