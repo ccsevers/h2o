@@ -195,10 +195,20 @@ public abstract class Layer extends Iced {
 
     transient Chunk[] _chunks;
 
+    private float prob;
+    private Random rand;
+    private float scale;
+
+
     VecsInput() {
     }
 
-    public VecsInput(Vec[] vecs, VecsInput stats) {
+    public VecsInput(Vec[] vecs, VecsInput stats, boolean dropout, float prob) {
+      assert prob <= 1.0f;
+      assert prob > 0 ;
+      this.prob = prob;
+      this.scale = 1/prob;
+      this.rand = new MersenneTwisterRNG(MersenneTwisterRNG.SEEDS);
       units = stats != null ? stats.subs.length : expand(vecs);
       this.vecs = vecs;
       _len = vecs[0].length();
@@ -217,6 +227,10 @@ public abstract class Layer extends Iced {
         muls = new float[units];
         stats(vecs);
       }
+    }
+
+    public VecsInput(Vec[] vecs, VecsInput stats) {
+      this(vecs, stats, false, 1.0f);
     }
 
     static int categories(Vec vec) {
@@ -254,6 +268,19 @@ public abstract class Layer extends Iced {
       }
       ChunksInput.set(_chunks, _a, (int) (_pos - _chunks[0]._start), subs, muls, categoricals);
     }
+
+    @Override void dropout_fprop() {
+      if( _chunks == null )
+          _chunks = new Chunk[vecs.length];
+      for( int i = 0; i < vecs.length; i++ ) {
+        Chunk c = _chunks[i];
+        if( c == null || c._vec != vecs[i] || _pos < c._start || _pos >= c._start + c._len )
+            _chunks[i] = vecs[i].chunk(_pos);
+      }
+      ChunksInput.set(_chunks, _a, (int) (_pos - _chunks[0]._start), subs, muls, categoricals);
+      for(int o = 0; o < _a.length; o++)
+        _a[o] *= (rand.nextFloat() < prob ? 1 : 0) * scale;
+      }
   }
 
   /**
