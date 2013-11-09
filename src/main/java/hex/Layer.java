@@ -584,9 +584,10 @@ public abstract class Layer extends Iced {
                 float cur = 0.0f;
                 for( int i = 0; i < _in._a.length; i++ )
                     // is it better to pre-fill the mask with rands?
-                    cur = _w[o * _in._a.length + i] * _in._a[i] * (rand.nextFloat() < prob ? 1 : 0) * scale;
+                    cur = _w[o * _in._a.length + i] * _in._a[i];
                     _a[o] = java.lang.Math.max(cur, _a[o]);
                 _a[o] += _b[o];
+                _a[o] *= (rand.nextFloat() < prob ? 1 : 0) * scale;
             }
         }
 
